@@ -1,7 +1,4 @@
 #!/bin/bash
-source activate NavigationBenchmarkMinos
-MAINDIR=$(pwd)/3rdparty
-
 DIR1=$(pwd)
 MAINDIR=$(pwd)/3rdparty
 mkdir ${MAINDIR}
