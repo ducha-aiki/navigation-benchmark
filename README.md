@@ -41,9 +41,9 @@ If you use this code or the provided environments in your research, please cite 
 You may want to comment/uncomment needed agents and/or environments if need to reproduce only part of them. 
 Agents contain random parts: RANSAC in ORBSLAM and 10% random actions in all agents. Nevertheless, results should be the same if run on the same PC. From machine to machine, results may differ (slightly)
 
-You may also want to turn on recording of videos (RGB, depth, GT map, map, beliefs) by setting VIDEO=True in benchmark_all_handcrafted_agents.py
+You may also want to turn on recording of videos (RGB, depth, GT map, map, beliefs) by setting VIDEO=True in  [benchmark_all_handcrafted_agents.py](benchmark_all_handcrafted_agents.py). 
 
-Simple example of working with agents is shown in (examples/BasicFunctionality.ipynb)
+Simple example of working with agents is shown in [example](examples/BasicFunctionality.ipynb). 
         
 ## Training 
 
