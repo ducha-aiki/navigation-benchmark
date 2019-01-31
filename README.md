@@ -3,11 +3,16 @@
 
 If you use this code or the provided environments in your research, please cite the following paper:
 
-    @article{Navigation2018,
-    author    = {Dmytro Mishkin, Alexey Dosovitskiy and Vladlen Koltun},
-    title     = {Benchmarking Classic and Learned Navigation in Complex 3D Environments},
-    year      = {2019}
+    @ARTICLE{Navigation2019,
+           author = {{Mishkin}, Dmytro and {Dosovitskiy}, Alexey and {Koltun}, Vladlen},
+            title = "{Benchmarking Classic and Learned Navigation in Complex 3D Environments}",
+             year = 2019,
+            month = Jan,
+    archivePrefix = {arXiv},
+           eprint = {1901.10915},
     }
+
+
     
 ## Dependencies:
 
