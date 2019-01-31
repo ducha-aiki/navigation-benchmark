@@ -1,7 +1,12 @@
 ### Code for the paper "Benchmarking Classic and Learned Navigation in Complex 3D Environments"
 
+Project website: https://sites.google.com/view/classic-vs-learned-navigation
 
-If you use this code or the provided environments in your research, please cite the following paper:
+Video: https://www.youtube.com/watch?v=b1S5ZbOAchc
+
+Paper: https://arxiv.org/abs/1901.10915
+
+If you use this code or the provided environments in your research, please cite the following:
 
     @ARTICLE{Navigation2019,
            author = {{Mishkin}, Dmytro and {Dosovitskiy}, Alexey and {Koltun}, Vladlen},
