@@ -27,6 +27,8 @@ cd headless-gl-nvidia
 pip install glad
 cd src/gl_context
 cd build
+NVIDIA_VERSION=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader)
+sed -i "s,  /usr/lib/nvidia-390,/usr/lib/nvidia-${NVIDIA_VERSION:0:3},g" ../CMakeLists.txt
 rm CMakeCache.txt
 cmake ..
 make 
