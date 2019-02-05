@@ -1,4 +1,5 @@
 import numpy as np
+import cv2
 import torch
 import random
 import time
@@ -30,6 +31,11 @@ def defaultAgentOptions(default_args = {'agent_type': 'ClassicRGBD'}):
     opts['slam_settings_path'] = 'data/mp3d3_small1k.yaml'
     if default_args['agent_type'] == 'ClassicRGB':
         opts['slam_settings_path'] = 'data/mp3d3_small5k.yaml'
+        opts['height']= 512
+        opts['width']= 512
+        opts['resolution']= [512, 512]
+    if default_args['agent_type'] == 'ClassicStereo':
+        opts['slam_settings_path'] = 'data/mp3d3_small1k_stereo.yaml'
         opts['height']= 512
         opts['width']= 512
         opts['resolution']= [512, 512]
@@ -561,6 +567,292 @@ class ClassicAgentWithDepth(RandomAgent):
         command = self.plannerPrediction2Command(self.waypointPose6D)
         return command2NumericAction(command)
 
+class ClassicAgentWithStereo(RandomAgent):
+    def __init__(self, 
+                 slam_vocab_path = '',
+                 slam_settings_path = '',
+                 pos_threshold = 0.15,
+                 angle_threshold = float(np.deg2rad(15)),
+                 far_pos_threshold = 0.5,
+                 obstacle_th = 40,
+                 map_size = 80,
+                 map_resolution = 0.1,
+                 device = torch.device('cpu'),
+                 **kwargs):
+        super(ClassicAgentWithStereo, self).__init__(**kwargs)
+        self.slam_vocab_path = slam_vocab_path
+        self.slam_settings_path = slam_settings_path
+        self.slam = orbslam2.System(slam_vocab_path,slam_settings_path, orbslam2.Sensor.STEREO)
+        self.slam.set_use_viewer(False)
+        self.slam.initialize()
+        self.tracking_is_OK = False
+        self.device = device
+        self.map_size_meters = map_size
+        self.map_cell_size = map_resolution
+        self.waypoint_id = 0
+        self.slam_to_world = 1.0
+        self.pos_th = pos_threshold
+        self.far_pos_threshold = far_pos_threshold
+        self.angle_th = angle_threshold
+        self.obstacle_th = obstacle_th
+        self.plannedWaypoints = []
+        self.mapper = DirectDepthMapper(**kwargs)
+        self.planner = DifferentiableStarPlanner(**kwargs)
+        self.timing = False
+        window_size = 5                     # wsize default 3; 5; 7 for SGBM reduced size image; 15 for SGBM full size image (1300px and above); 5 Works nicely
+        self.left_matcher = cv2.StereoSGBM_create(
+             minDisparity=0,
+             numDisparities=128,             # max_disp has to be dividable by 16 f. E. HH 192, 256
+             blockSize=5,
+             P1=8 * 3 * window_size ** 2,    # wsize default 3; 5; 7 for SGBM reduced size image; 15 for SGBM full size image (1300px and above); 5 Works nicely
+             P2=32 * 3 * window_size ** 2,
+             disp12MaxDiff=1,
+             uniquenessRatio=15,
+             speckleWindowSize=0,
+             speckleRange=2,
+             preFilterCap=63,
+             mode=cv2.STEREO_SGBM_MODE_SGBM_3WAY
+        )
+        self.right_matcher = cv2.ximgproc.createRightMatcher(self.left_matcher)
+        # FILTER Parameters
+        lmbda = 80000
+        sigma = 1.2
+        visual_multiplier = 1.0
+        self.wls_filter = cv2.ximgproc.createDisparityWLSFilter(matcher_left=self.left_matcher)
+        self.wls_filter.setLambda(lmbda)
+        self.wls_filter.setSigmaColor(sigma)
+        self.reset()
+        return
+    def reset(self):
+        super(ClassicAgentWithStereo, self).reset()
+        self.offset_to_goal = None
+        self.waypointPose6D = None
+        self.unseen_obstacle = False
+        self.action_history = []
+        self.plannedWaypoints = []
+        self.map2DObstacles = self.initMap2D()
+        n,ch, height, width = self.map2DObstacles.size()
+        self.coordinatesGrid = generate_2dgrid(height, 
+                                       width,False).to(self.device)
+        self.pose6D = self.initPose6D()
+        self.action_history = []
+        self.pose6D_history = []
+        self.position_history = []
+        self.planned2Dpath = torch.zeros((0))
+        self.slam.reset()
+        self.toDoList = []
+        if self.waypoint_id > 92233720368547758: #not used here, reserved for hybrid agent
+            self.waypoint_id = 0
+        return
+    def updateInternalState(self, minos_observation):
+        super(ClassicAgentWithStereo, self).updateInternalState(minos_observation)
+        rgb, depth, cur_time, right = self.rgbAndDAndTimeFromObservation(minos_observation)
+        t= time.time()
+        try:
+            self.slam.process_image_stereo(rgb, right, cur_time)
+            if self.timing:
+                print(time.time() -t , 'ORB_SLAM2')
+            self.tracking_is_OK = str(self.slam.get_tracking_state()) == "OK"
+        except:
+            print ("Warning!!!! ORBSLAM processing frame error")
+            self.tracking_is_OK = False
+        if not self.tracking_is_OK:
+            self.reset()
+        t = time.time()
+        self.setOffsetToGoal(minos_observation)
+        if self.tracking_is_OK:
+            trajectory_history = np.array(self.slam.get_trajectory_points())
+            self.pose6D = homogenizeP(torch.from_numpy(trajectory_history[-1])[1:].view(3,4).to(self.device)).view(1,4,4)
+            self.trajectory_history = trajectory_history
+            if (len(self.position_history) > 1):
+                previous_step = getPosDiffLength(self.pose6D.view(4,4),
+                                torch.from_numpy(self.position_history[-1]).view(4,4).to(self.device))
+                if action2Command(self.action_history[-1]) == "forwards":
+                    self.unseen_obstacle = previous_step.item() <=  0.001 #hardcoded threshold for not moving
+        current_obstacles = self.mapper(torch.from_numpy(depth).to(self.device).squeeze(),self.pose6D).to(self.device)
+        self.current_obstacles = current_obstacles
+        self.map2DObstacles =  torch.max(self.map2DObstacles, 
+                                               current_obstacles.unsqueeze(0).unsqueeze(0))
+        if self.timing:
+            print(time.time() -t , 'Mapping')
+        return True
+    def initPose6D(self):
+        return torch.eye(4).float().to(self.device)
+    def mapSizeInCells(self):
+        return int(self.map_size_meters / self.map_cell_size)
+    def initMap2D(self):
+        return torch.zeros(1,1,self.mapSizeInCells(),self.mapSizeInCells()).float().to(self.device)
+    def getCurrentOrientationOnMap(self):
+        self.pose6D = self.pose6D.view(1,4,4)
+        return torch.tensor([[self.pose6D[0,0,0], self.pose6D[0,0,2]], 
+                             [self.pose6D[0,2,0], self.pose6D[0,2,2]]])
+    def getCurrentPositionOnMap(self, do_floor = True):
+        return projectTPsIntoWorldMap(self.pose6D.view(1,4,4), self.map_cell_size, self.map_size_meters, do_floor)
+    def act(self, minos_observation, random_prob = 0.1):
+        # Update internal state
+        t = time.time()
+        cc= 0
+        updateIsOK = self.updateInternalState(minos_observation)
+        while not updateIsOK:
+            updateIsOK = self.updateInternalState(minos_observation)
+            cc+=1
+            if cc>2:
+                break
+        if self.timing:
+            print (time.time() - t, " s, update internal state")
+        self.position_history.append(self.pose6D.detach().cpu().numpy().reshape(1,4,4))
+        success = self.isGoalReached()
+        if success:
+            self.action_history.append(action)
+            return action, success
+        # Plan action
+        t = time.time()
+        self.planned2Dpath, self.plannedWaypoints = self.planPath()
+        if self.timing:
+            print (time.time() - t, " s, Planning")
+        t = time.time()
+        # Act
+        if self.waypointPose6D is None:
+            self.waypointPose6D = self.getValidWaypointPose6D()
+        if self.isWaypointReached(self.waypointPose6D) or not self.tracking_is_OK:
+            self.waypointPose6D = self.getValidWaypointPose6D()
+            self.waypoint_id+=1
+        action = self.decideWhatToDo()
+        #May be random?
+        random_idx = torch.randint(3, size = (1,)).long()
+        random_action = torch.zeros(self.num_actions).cpu().numpy()
+        random_action[random_idx] = 1
+        what_to_do =  np.random.uniform(0,1,1)
+        if what_to_do < random_prob:
+            action = random_action
+        if self.timing:
+            print (time.time() - t, " s, plan 2 action")
+        self.action_history.append(action)
+        return action, success
+    def isWaypointGood(self,pose6d):
+        Pinit = self.pose6D.squeeze()
+        dist_diff = getPosDiffLength(Pinit,pose6d)
+        valid = dist_diff > self.far_pos_threshold
+        return valid.item()
+    def isWaypointReached(self,pose6d):
+        Pinit = self.pose6D.squeeze()
+        dist_diff = getPosDiffLength(Pinit,pose6d)
+        reached = dist_diff <= self.pos_th  
+        return reached.item()
+    def getWaypointDistDir(self):
+        angle = getDirection(self.pose6D.squeeze(), self.waypointPose6D.squeeze(),0,0)
+        dist = getPosDiffLength(self.pose6D.squeeze(), self.waypointPose6D.squeeze())
+        return torch.cat([dist.view(1,1), torch.sin(angle).view(1,1),torch.cos(angle).view(1,1)], dim = 1)
+    def getValidWaypointPose6D(self):
+        good_waypoint_found = False
+        Pinit = self.pose6D.squeeze()
+        Pnext = self.plannedWaypoints[0]
+        while not self.isWaypointGood(Pnext):
+            if (len(self.plannedWaypoints) > 1):
+                self.plannedWaypoints = self.plannedWaypoints[1:]
+                Pnext = self.plannedWaypoints[0]
+            else:
+                Pnext = self.estimatedGoalPos6D.squeeze()
+                break
+        return Pnext
+    def setOffsetToGoal(self, observation):
+        self.offset_to_goal = torch.tensor(observation['observation']['measurements']['offset_to_goal'])
+        self.estimatedGoalPos2D = minosOffsetToGoal2MapGoalPosition(self.offset_to_goal, 
+                                                                    self.pose6D.squeeze(),
+                                                                    self.map_cell_size, 
+                                                                    self.map_size_meters)
+        self.estimatedGoalPos6D =  plannedPath2TPs([self.estimatedGoalPos2D],  
+                                   self.map_cell_size, 
+                                   self.map_size_meters, 
+                                   1.0).to(self.device)[0]
+        return
+    def rgbAndDAndTimeFromObservation(self,minos_observation):
+        rgb = minos_observation['observation']['sensors']['color']['data'][:,:,:3]
+        right = minos_observation['observation']['sensors']['right']['data'][:,:,:3]
+        imgL = rgb.astype(np.uint8)
+        imgR = right.astype(np.uint8)
+        displ = self.left_matcher.compute(imgL, imgR)  # .astype(np.float32)/16
+        dispr = self.right_matcher.compute(imgR, imgL)  # .astype(np.float32)/16
+        displ = np.int16(displ)
+        dispr = np.int16(dispr)
+        #From http://timosam.com/python_opencv_depthimage
+        filteredImg = self.wls_filter.filter(displ, imgL, None, dispr)  # important to put "imgL" here!!!
+        dd = np.clip(filteredImg/16., 0, 100)
+        dd[dd<0] = 0
+        #plt.imshow(dd)
+        baseline = 0.2
+        fx = 512.
+        depth = baseline * fx / ((dd+1e-15))
+        depth = depth / 0.8
+        depth[depth > 3.0] = 0
+        depth[depth < 0.1] = 0
+        cur_time = minos_observation['observation']['time']
+        return rgb, depth.astype(np.float32), cur_time, right
+    def prevPlanIsNotValid(self):
+        if len(self.planned2Dpath) == 0:
+            return True
+        pp = torch.cat(self.planned2Dpath).detach().cpu().view(-1,2)
+        binary_map = self.map2DObstacles.squeeze().detach() >= self.obstacle_th
+        obstacles_on_path =  (binary_map[pp[:,0].long(),pp[:,1].long()]).long().sum().item() > 0
+        return obstacles_on_path# obstacles_nearby or  obstacles_on_path
+    def rawMap2PlanerReady(self, rawmap, start_map, goal_map):
+        map1 = (rawmap / float(self.obstacle_th))**2
+        map1 = torch.clamp(map1, min=0, max=1.0) - start_map - F.max_pool2d(goal_map, 3, stride=1, padding=1)
+        return torch.relu(map1)
+    def planPath(self, overwrite = False):
+        t=time.time()
+        if (not self.prevPlanIsNotValid()) and (not overwrite) and (len(self.plannedWaypoints) > 0):
+            return self.planned2Dpath, self.plannedWaypoints         
+        self.waypointPose6D = None
+        current_pos = self.getCurrentPositionOnMap()
+        start_map = torch.zeros_like(self.map2DObstacles).to(self.device)
+        start_map[0,0,current_pos[0,0].long(),current_pos[0,1].long()] = 1.0
+        goal_map = torch.zeros_like(self.map2DObstacles).to(self.device)
+        goal_map[0,0,self.estimatedGoalPos2D[0,0].long(),self.estimatedGoalPos2D[0,1].long()] = 1.0
+        path, cost = self.planner(self.rawMap2PlanerReady(self.map2DObstacles,  start_map, goal_map).to(self.device),
+                                  self.coordinatesGrid.to(self.device), goal_map.to(self.device),  start_map.to(self.device))
+        if len(path) == 0:
+            return path, []
+        if self.timing:
+            print(time.time() - t, ' s, Planning')
+        t=time.time()
+        plannedWaypoints = plannedPath2TPs(path,  
+                                   self.map_cell_size, 
+                                   self.map_size_meters, 
+                                   1.0, False).to(self.device)
+        return path, plannedWaypoints
+    def plannerPrediction2Command(self, Pnext):
+        command = "Idle"
+        Pinit = self.pose6D.squeeze()
+        d_angle_rot_th = self.angle_th
+        pos_th = self.pos_th
+        if getPosDiffLength(Pinit,Pnext) <= pos_th:
+            return command
+        d_angle = angleToPi_2_MinusPi_2(getDirection(Pinit, Pnext, ang_th = d_angle_rot_th, pos_th = pos_th))
+        if (abs(d_angle) < d_angle_rot_th):
+            command = "forwards"
+        else:
+            if (d_angle > 0) and (d_angle < pi):
+                command = 'turnLeft'
+            elif (d_angle > pi):
+                command = 'turnRight'
+            elif (d_angle < 0) and (d_angle > -pi):
+                command = 'turnRight'
+            else:
+                command = 'turnLeft'
+        return command
+    def decideWhatToDo(self):
+        action = None
+        if self.isGoalReached():
+            action = command2NumericAction("Idle")
+            print ("!!!!!!!!!!!! Goal reached!")
+            return action
+        if self.unseen_obstacle:
+            command = 'turnRight'
+            return command2NumericAction(command)
+        command = "Idle"
+        command = self.plannerPrediction2Command(self.waypointPose6D)
+        return command2NumericAction(command)
 class ClassicAgentRGB(RandomAgent):
     def __init__(self, 
                  slam_vocab_path = '',
