@@ -43,7 +43,7 @@ parser = argparse.ArgumentParser(description='MINOS gym benchmark')
 
 parser.add_argument('--agent-type', type=str,
                     default="Random",
-                    help='Random, Blind, ClassicRGB, ClassicRGBD, ClassicGTPose, ClassicGTMapGTPose')#Logging 
+                    help='Random, Blind, ClassicRGB, ClassicStereoCNN, ClassicStereoOpenCV, ClassicMonoDepth, ClassicRGBD, ClassicGTPose, ClassicGTMapGTPose')#Logging 
 parser.add_argument('--logdir-prefix', type=str,
                     default='LOGS/',
                     help='init driving net from pretrained')
@@ -58,13 +58,13 @@ parser.add_argument('--timing', type=str2bool,
                     help='show time for steps')
 # Benchmark opts
 parser.add_argument('--start-from-episode', type=int,
-                    default=-1,
+                    default=0,
                     help='skip this number of episodes')
 parser.add_argument('--num-episodes-per-scene', type=int,
                     default=10,
                     help='Number of diffent random start and end locations')
 parser.add_argument('--episode-schedule', type=str,
-                    default='val',
+                    default='test',
                     help='Split to use. Possible are: train, val, test. Paper reports results on test')
 parser.add_argument('--seed', type=int,
                     default=42,
@@ -72,7 +72,6 @@ parser.add_argument('--seed', type=int,
 
 
 args = parse_sim_args(parser)
-opts = defaultAgentOptions(args)
 
 #For storing video and logs
 #get map and depth anyway for video storing.
@@ -80,6 +79,11 @@ opts = defaultAgentOptions(args)
 args['observations']['map']  = True
 args['observations']['depth'] = True
 args['log_action_trace'] = True
+#args['width'] = 512
+#args['height'] = 512
+#args['resolution'] = [512,512]
+
+opts = defaultAgentOptions(args)
 
 
 RANDOM_SEED = args['seed']
@@ -98,6 +102,12 @@ if __name__ == "__main__":
     elif args['agent_type'] == 'ClassicRGB':
         draw_map = True
         agent = ClassicAgentRGB(**opts)
+    elif args['agent_type'] == 'ClassicStereoCNN':
+        draw_map = True
+        agent = ClassicAgentWithCNNStereoDepth(**opts)
+    elif args['agent_type'] == 'ClassicStereoOpenCV':
+        draw_map = True
+        agent = ClassicAgentWithStereo(**opts)
     elif args['agent_type'] == 'ClassicRGBD':
         draw_map = True
         agent = ClassicAgentWithDepth(**opts)
@@ -108,7 +118,7 @@ if __name__ == "__main__":
         draw_map = True
         agent = CheatingAgentWithGTPoseAndMap(**opts)
     else:
-        raise ValueError(args['agent_type'] + ' inknown type of agent. Try Random, Blind, ClassicRGB, ClassicRGBD, ClassicGTPose, ClassicGTMapGTPose')
+        raise ValueError(args['agent_type'] + ' inknown type of agent. Try Random, Blind, ClassicRGB, ClassicRGBD, ClassicStereoCNN, ClassicStereoOpenCV, ClassicMonoDepth, ClassicGTPose, ClassicGTMapGTPose')
     logging_agent = LoggingAgent(**opts)
     del opts['device']
     out_dir_name = os.path.join(args['logdir_prefix'], experiment_name(agent, args) + gettimestr())

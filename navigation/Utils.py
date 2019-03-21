@@ -4,6 +4,7 @@ import os
 import torch
 from PIL import Image
 import time
+import math
 
 def readRLE(data, w, h):
     out_img = []
@@ -64,7 +65,7 @@ def prepareDir(direction):
     return torch.from_numpy(direction).float().view(1,2)
 
 def findMapSize(h, w):
-    map_size_in_meters = int(0.1 * 3 * max(h,w))
+    map_size_in_meters = int(0.1 * 4 * math.sqrt(h*w))
     if map_size_in_meters % 10 != 0:
         map_size_in_meters = map_size_in_meters + (10 - (map_size_in_meters % 10))
     return map_size_in_meters

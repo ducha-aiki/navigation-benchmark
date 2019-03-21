@@ -3,8 +3,8 @@ DIR1=$(pwd)
 MAINDIR=$(pwd)/3rdparty
 mkdir ${MAINDIR}
 cd ${MAINDIR}
-conda create -y -n "NavigationBenchmarkMinos" python=3.6
-source activate NavigationBenchmarkMinos
+conda create -y -n "NavigationBenchmarkMinosNew" python=3.6
+source activate NavigationBenchmarkMinosNew
 conda install opencv -y
 conda install pytorch torchvision -c pytorch -y
 conda install -c conda-forge imageio -y
@@ -15,7 +15,9 @@ NVM_DIR="${HOME}/.nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion" 
 nvm install node
 cd ${MAINDIR}
+rm minos -rf
 git clone https://github.com/minosworld/minos
+cd ${MAINDIR}
 cd minos
 cd minos/server
 rm -rf node_modules
@@ -52,6 +54,7 @@ git clone https://github.com/msavva/socketIO-client-2
 cd socketIO-client-2
 pip install -e .
 cd ${MAINDIR}
+: '
 mkdir eigen3
 cd eigen3
 wget http://bitbucket.org/eigen/eigen/get/3.3.5.tar.gz
@@ -96,8 +99,9 @@ cd ${MAINDIR}/ORB_SLAM2-PythonBindings
 mkdir build
 cd build
 CONDA_DIR=$(dirname $(dirname $(which conda)))
-sed -i "s,lib/python3.5/dist-packages,${CONDA_DIR}/envs/NavigationBenchmarkMinos/lib/python3.6/site-packages/,g" ../CMakeLists.txt
+sed -i "s,lib/python3.5/dist-packages,${CONDA_DIR}/envs/NavigationBenchmarkMinosNew/lib/python3.6/site-packages/,g" ../CMakeLists.txt
 cmake .. -DPYTHON_INCLUDE_DIR=$(python -c "from distutils.sysconfig import get_python_inc; print(get_python_inc())") -DPYTHON_LIBRARY=$(python -c "import distutils.sysconfig as sysconfig; print(sysconfig.get_config_var('LIBDIR'))")/libpython3.6m.so -DPYTHON_EXECUTABLE:FILEPATH=`which python` -DCMAKE_LIBRARY_PATH=${MAINDIR}/ORBSLAM2_installed/lib -DCMAKE_INCLUDE_PATH=${MAINDIR}/ORBSLAM2_installed/include;${MAINDIR}/eigen3_installed/include/eigen3 -DCMAKE_INSTALL_PREFIX=${MAINDIR}/pyorbslam2_installed 
 make
 make install
 cp ${MAINDIR}/ORB_SLAM2/Vocabulary/ORBvoc.txt ${DIR1}/data/
+'

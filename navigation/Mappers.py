@@ -54,7 +54,7 @@ class DirectDepthMapper(nn.Module):
                  #cx = 0,
                  #cy = 0,
                  camera_height = 0,
-                 near_th = 0.1, far_th = 4.0, h_min = 0.0, h_max = 1.0,
+                 near_th = 0.1, far_th = 3.0, h_min = 0.0, h_max = 1.0,
                  map_size = 40, map_cell_size = 0.1,
                  device = torch.device('cpu'),
                  **kwargs):
@@ -75,10 +75,14 @@ class DirectDepthMapper(nn.Module):
     def forward(self, depth, pose = torch.eye(4).float()):
         self.device = depth.device
         #Works for FOV = 45 degrees in minos/sensors.yml. Should be adjusted, if FOV changed
-        self.fx = float(depth.size(1))# / 2.0
-        self.fy = float(depth.size(0))# / 2.0
-        self.cx = int(self.fx)//2 - 1
-        self.cy = int(self.fy)//2 - 1
+        #self.fx = float(depth.size(1))# / 2.0
+        #self.fy = float(depth.size(0))# / 2.0
+        #self.cx = int(self.fx)//2 - 1
+        #self.cy = int(self.fy)//2 - 1
+        self.fx = float(depth.size(1)) / 2.0
+        self.fy = float(depth.size(0)) / 2.0
+        self.cx = int(self.fx) - 1
+        self.cy = int(self.fy) - 1
         pose = pose.to(self.device)
         local_3d_pcl = DepthToLocal3D(depth, self.fx, self.fy, self.cx, self.cy)
         idxs = (torch.abs(local_3d_pcl[:,2]) < self.far_th) * (torch.abs(local_3d_pcl[:,2]) >= self.near_th)
